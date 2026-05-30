@@ -1,0 +1,42 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+*.egg
+
+# ChromaDB data
+backend/chroma_db/
+backend/metadata_store.json
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+
+# Whisper cache
+~/.cache/whisper/
+
+# Models cache
+~/.cache/torch/
+~/.cache/huggingface/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp

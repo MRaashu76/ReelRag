@@ -1,0 +1,328 @@
+openapi: 3.1.0
+info:
+  title: ReelRAG – Video Comparison API
+  description: |
+    RAG-powered API for comparing YouTube and Instagram videos.
+    Extracts transcripts, calculates engagement metrics, stores embeddings
+    in ChromaDB, and exposes a streaming chat interface backed by LangGraph.
+  version: 1.0.0
+  contact:
+    name: ReelRAG Team
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+tags:
+  - name: analyze
+    description: Video analysis pipeline (metadata + transcript extraction + indexing)
+  - name: videos
+    description: Retrieve stored video metadata
+  - name: chat
+    description: RAG chat with streaming SSE responses
+  - name: admin
+    description: Debug and operational endpoints
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: rag-video-compare
+
+  /api/analyze:
+    post:
+      tags: [analyze]
+      summary: Start video analysis pipeline
+      description: |
+        Accepts a YouTube URL and Instagram Reel URL.
+        Starts background extraction: metadata, transcripts (Whisper fallback),
+        engagement rate calculation, chunking (800/150), and ChromaDB indexing.
+        Returns immediately; poll /api/analyze/status for progress.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeRequest"
+            example:
+              youtube_url: "https://youtube.com/watch?v=dQw4w9WgXcQ"
+              instagram_url: "https://instagram.com/reel/ABC123def/"
+      responses:
+        "200":
+          description: Analysis pipeline started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeResponse"
+        "409":
+          description: Analysis already in progress
+        "422":
+          description: Invalid URL format
+
+  /api/analyze/status:
+    get:
+      tags: [analyze]
+      summary: Poll analysis progress
+      description: Returns current status of the background analysis pipeline.
+      responses:
+        "200":
+          description: Current pipeline status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisStatus"
+              examples:
+                processing:
+                  value:
+                    status: processing
+                    progress: "Indexing YouTube transcript..."
+                    error: ""
+                completed:
+                  value:
+                    status: completed
+                    progress: "Analysis complete!"
+                    error: ""
+                error:
+                  value:
+                    status: error
+                    progress: ""
+                    error: "Could not extract Instagram reel. Video may be private."
+
+  /api/videos:
+    get:
+      tags: [videos]
+      summary: Get all analyzed video metadata
+      description: Returns metadata for Video A (YouTube) and Video B (Instagram).
+      responses:
+        "200":
+          description: List of video metadata objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VideoMetadata"
+
+  /api/videos/{video_id}:
+    get:
+      tags: [videos]
+      summary: Get metadata for a specific video
+      parameters:
+        - name: video_id
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [A, B]
+      responses:
+        "200":
+          description: Video metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoMetadata"
+        "404":
+          description: Video not found
+
+  /api/chat:
+    post:
+      tags: [chat]
+      summary: Chat with analyzed videos (SSE streaming)
+      description: |
+        Sends a message to the LangGraph RAG pipeline and streams the response
+        as Server-Sent Events. The pipeline:
+        1. Retrieves top-5 relevant chunks per video from ChromaDB
+        2. Loads video metadata
+        3. Builds a combined context
+        4. Generates a response with GPT-4o-mini
+        5. Streams tokens + emits source citations
+
+        SSE event types:
+        - `token` — partial response text
+        - `sources` — list of cited chunks (video_id + chunk_id)
+        - `done` — stream complete
+        - `error` — pipeline error
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+            example:
+              message: "Why did Video A perform better than Video B?"
+              session_id: "session_abc123"
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                data: {"type": "token", "content": "Video A "}
+                data: {"type": "token", "content": "outperformed "}
+                data: {"type": "sources", "sources": [{"video_id": "A", "chunk_id": 2, "source": "youtube"}]}
+                data: {"type": "done"}
+        "400":
+          description: No videos analyzed yet
+
+  /api/admin/stats:
+    get:
+      tags: [admin]
+      summary: ChromaDB and cache statistics
+      responses:
+        "200":
+          description: Stats object
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chromadb:
+                    type: object
+                    properties:
+                      total_chunks:
+                        type: integer
+                      by_video:
+                        type: object
+                  metadata_store:
+                    type: object
+                  cache:
+                    type: object
+
+  /api/admin/cache:
+    delete:
+      tags: [admin]
+      summary: Flush all in-memory caches
+      responses:
+        "200":
+          description: Cache cleared
+
+  /api/admin/videos:
+    delete:
+      tags: [admin]
+      summary: Reset all video data (metadata + ChromaDB)
+      responses:
+        "200":
+          description: All video data cleared
+
+components:
+  schemas:
+    AnalyzeRequest:
+      type: object
+      required: [youtube_url, instagram_url]
+      properties:
+        youtube_url:
+          type: string
+          format: uri
+          description: Must contain youtube.com or youtu.be
+          example: "https://youtube.com/watch?v=dQw4w9WgXcQ"
+        instagram_url:
+          type: string
+          format: uri
+          description: Must contain instagram.com/reel/ or instagram.com/p/
+          example: "https://instagram.com/reel/ABC123def/"
+
+    AnalyzeResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: processing
+        message:
+          type: string
+          example: Analysis started
+
+    AnalysisStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [idle, processing, completed, error]
+        progress:
+          type: string
+        error:
+          type: string
+
+    VideoMetadata:
+      type: object
+      properties:
+        video_id:
+          type: string
+          enum: [A, B]
+        title:
+          type: string
+        creator_name:
+          type: string
+        follower_count:
+          type: integer
+          nullable: true
+        views:
+          type: integer
+          nullable: true
+        likes:
+          type: integer
+          nullable: true
+        comments:
+          type: integer
+          nullable: true
+        upload_date:
+          type: string
+          nullable: true
+        duration_seconds:
+          type: integer
+          nullable: true
+        hashtags:
+          type: array
+          items:
+            type: string
+        transcript:
+          type: string
+          nullable: true
+        engagement_rate:
+          type: number
+          format: float
+          nullable: true
+          description: "(likes + comments) / views * 100"
+        source:
+          type: string
+          enum: [youtube, instagram]
+        url:
+          type: string
+
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: "Why did Video A perform better than Video B?"
+        session_id:
+          type: string
+          default: default
+          description: Used for conversation memory (LangGraph MemorySaver)
+
+    ChatSource:
+      type: object
+      properties:
+        video_id:
+          type: string
+          enum: [A, B]
+        chunk_id:
+          type: integer
+        source:
+          type: string
+          enum: [youtube, instagram]
