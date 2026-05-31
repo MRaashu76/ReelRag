@@ -24,9 +24,7 @@ export default function Icon() {
             width: "26px",
             height: "26px",
             borderRadius: "7px",
-            border: "2.5px solid transparent",
-            background:
-              "linear-gradient(#000,#000) padding-box, linear-gradient(135deg, #FF0000, #E1306C) border-box",
+            border: "2.5px solid #E1306C",
           }}
         />
         {/* Instagram top-right dot */}
