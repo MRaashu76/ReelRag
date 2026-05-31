@@ -178,12 +178,42 @@ def get_instagram_transcript(url: str) -> Optional[str]:
                 logger.warning(f"No audio file found for Instagram reel {shortcode}")
                 return None
 
-            logger.info(f"Transcribing Instagram reel {shortcode} with Whisper...")
-            model = whisper.load_model("base")
-            result = model.transcribe(audio_file)
-            transcript = result["text"]
-            logger.info(f"Whisper transcribed Instagram {shortcode}, length: {len(transcript)}")
-            return transcript.strip()
+            logger.info(f"Transcribing Instagram reel {shortcode} with Groq Whisper API...")
+            import httpx
+            import os
+            
+            groq_api_key = os.environ.get("GROQ_API_KEY")
+            if not groq_api_key:
+                logger.error("GROQ_API_KEY not found, cannot transcribe.")
+                return None
+
+            headers = {
+                "Authorization": f"Bearer {groq_api_key}"
+            }
+            
+            with open(audio_file, "rb") as f:
+                files = {
+                    "file": (os.path.basename(audio_file), f, "audio/mpeg")
+                }
+                data = {
+                    "model": "whisper-large-v3",
+                    "response_format": "json",
+                }
+                response = httpx.post(
+                    "https://api.groq.com/openai/v1/audio/transcriptions",
+                    headers=headers,
+                    data=data,
+                    files=files,
+                    timeout=30.0
+                )
+                
+            if response.status_code == 200:
+                transcript = response.json().get("text", "")
+                logger.info(f"Groq transcribed Instagram {shortcode}, length: {len(transcript)}")
+                return transcript.strip()
+            else:
+                logger.error(f"Groq API error: {response.text}")
+                return None
 
     except Exception as e:
         logger.error(f"Failed to transcribe Instagram reel {shortcode}: {e}")

@@ -168,11 +168,42 @@ def _whisper_fallback(url: str, video_id: str) -> Optional[str]:
                 # yt-dlp may add extension
                 audio_path = audio_path + ".mp3"
 
-            model = whisper.load_model("base")
-            result = model.transcribe(audio_path)
-            transcript = result["text"]
-            logger.info(f"Whisper transcribed YouTube {video_id}, length: {len(transcript)}")
-            return transcript.strip()
+            logger.info(f"Transcribing YouTube {video_id} with Groq Whisper API...")
+            import httpx
+            import os
+            
+            groq_api_key = os.environ.get("GROQ_API_KEY")
+            if not groq_api_key:
+                logger.error("GROQ_API_KEY not found, cannot transcribe.")
+                return None
+
+            headers = {
+                "Authorization": f"Bearer {groq_api_key}"
+            }
+            
+            with open(audio_path, "rb") as f:
+                files = {
+                    "file": (os.path.basename(audio_path), f, "audio/mpeg")
+                }
+                data = {
+                    "model": "whisper-large-v3",
+                    "response_format": "json",
+                }
+                response = httpx.post(
+                    "https://api.groq.com/openai/v1/audio/transcriptions",
+                    headers=headers,
+                    data=data,
+                    files=files,
+                    timeout=30.0
+                )
+                
+            if response.status_code == 200:
+                transcript = response.json().get("text", "")
+                logger.info(f"Groq transcribed YouTube {video_id}, length: {len(transcript)}")
+                return transcript.strip()
+            else:
+                logger.error(f"Groq API error: {response.text}")
+                return None
 
     except Exception as e:
         logger.error(f"Whisper fallback failed for YouTube {video_id}: {e}")

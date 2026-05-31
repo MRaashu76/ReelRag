@@ -16,9 +16,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Pre-download BAAI embedding model
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"
 
-# Pre-download Whisper base model
-RUN python -c "import whisper; whisper.load_model('base')"
-
 COPY . .
 
 EXPOSE 8000

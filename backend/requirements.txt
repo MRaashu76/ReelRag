@@ -25,7 +25,6 @@ chromadb
 # Transcript extraction
 youtube-transcript-api
 yt-dlp
-openai-whisper
 
 # Audio processing
 ffmpeg-python
