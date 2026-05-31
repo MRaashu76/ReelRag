@@ -50,16 +50,60 @@ def get_youtube_transcript(url: str) -> Optional[str]:
     return _whisper_fallback(url, video_id)
 
 
-def get_youtube_metadata(url: str) -> dict:
-    """Extract YouTube video metadata using yt-dlp."""
-    import yt_dlp
+def parse_youtube_duration(duration_str: str) -> int:
+    import re
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
+    if not match: return 0
+    h, m, s = match.groups()
+    total = 0
+    if h: total += int(h) * 3600
+    if m: total += int(m) * 60
+    if s: total += int(s)
+    return total
 
+def get_youtube_metadata(url: str) -> dict:
+    """Extract YouTube video metadata using Official API or yt-dlp."""
+    api_key = os.environ.get("YOUTUBE_API_KEY")
+    video_id = extract_youtube_video_id(url)
+    
+    if api_key and video_id:
+        try:
+            import httpx
+            api_url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id={video_id}&key={api_key}"
+            response = httpx.get(api_url, timeout=10.0)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("items"):
+                    item = data["items"][0]
+                    snippet = item.get("snippet", {})
+                    stats = item.get("statistics", {})
+                    content_details = item.get("contentDetails", {})
+                    
+                    duration_str = content_details.get("duration", "")
+                    duration_seconds = parse_youtube_duration(duration_str)
+                    
+                    logger.info(f"Successfully fetched metadata via YouTube API for {video_id}")
+                    return {
+                        "title": snippet.get("title", "Unknown Title"),
+                        "creator_name": snippet.get("channelTitle", "Unknown Creator"),
+                        "follower_count": None, # Requires separate channel API call
+                        "views": int(stats.get("viewCount", 0)) if stats.get("viewCount") else None,
+                        "likes": int(stats.get("likeCount", 0)) if stats.get("likeCount") else None,
+                        "comments": int(stats.get("commentCount", 0)) if stats.get("commentCount") else None,
+                        "upload_date": snippet.get("publishedAt", "")[:10] if snippet.get("publishedAt") else None,
+                        "duration_seconds": duration_seconds,
+                        "hashtags": snippet.get("tags", [])[:10] if snippet.get("tags") else [],
+                    }
+        except Exception as e:
+            logger.error(f"YouTube Data API failed: {e}")
+
+    # Fallback to yt-dlp
+    import yt_dlp
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
     }
-
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -80,7 +124,6 @@ def get_youtube_metadata(url: str) -> dict:
             }
     except Exception as e:
         logger.error(f"Failed to extract YouTube metadata: {e}")
-        # Return fallback metadata to prevent pipeline crash when YouTube blocks scraping
         return {
             "title": "YouTube Video (Metadata Restricted)",
             "creator_name": "Unknown Creator",
