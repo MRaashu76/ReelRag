@@ -13,6 +13,7 @@ langchain-community
 langchain-chroma
 langchain-text-splitters
 langgraph
+g4f
 
 # Embeddings
 sentence-transformers
