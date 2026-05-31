@@ -1,6 +1,8 @@
 // API service for RAG Video Comparison backend
 
-const BASE_URL = "/api";
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL 
+  ? `${process.env.NEXT_PUBLIC_API_URL}/api` 
+  : "/api";
 
 export interface VideoMetadata {
   video_id: string;
