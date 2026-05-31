@@ -79,17 +79,29 @@ def get_instagram_metadata(url: str) -> dict:
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
+        "socket_timeout": 15,
+    }
+    
+    yt_data = {
+        "title": "Instagram Reel",
+        "creator_name": "Unknown Creator",
+        "follower_count": None,
+        "views": None,
+        "likes": None,
+        "comments": None,
+        "upload_date": None,
+        "duration_seconds": None,
+        "hashtags": [],
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
-            hashtags = []
             description = info.get("description", "") or ""
             hashtags = re.findall(r"#\w+", description)[:10]
 
-            yt_data = {
+            yt_data.update({
                 "title": info.get("title", "Instagram Reel"),
                 "creator_name": info.get("uploader", info.get("channel", "Unknown Creator")),
                 "follower_count": info.get("channel_follower_count"),
@@ -99,18 +111,24 @@ def get_instagram_metadata(url: str) -> dict:
                 "upload_date": info.get("upload_date"),
                 "duration_seconds": info.get("duration"),
                 "hashtags": hashtags,
-            }
+            })
             
-            # Merge with RapidAPI data (prefer valid/non-null values from RapidAPI)
-            rapid_data = _get_rapidapi_metadata(url)
-            for key, val in rapid_data.items():
-                if val is not None and str(val).strip() != "":
-                    yt_data[key] = val
-                    
-            return yt_data
     except Exception as e:
-        logger.error(f"Failed to extract Instagram metadata: {e}")
-        raise RuntimeError(f"Could not extract Instagram metadata. The reel may be private or unavailable. Error: {e}")
+        logger.warning(f"yt-dlp failed to extract Instagram metadata, falling back to RapidAPI: {e}")
+
+    # Merge with RapidAPI data (prefer valid/non-null values from RapidAPI)
+    try:
+        rapid_data = _get_rapidapi_metadata(url)
+        for key, val in rapid_data.items():
+            if val is not None and str(val).strip() != "":
+                yt_data[key] = val
+    except Exception as e:
+        logger.warning(f"RapidAPI fallback failed: {e}")
+        
+    if not any(yt_data.get(k) for k in ["views", "likes", "comments", "follower_count"]):
+        raise RuntimeError("Could not extract Instagram metadata. The reel may be private or rate limited.")
+
+    return yt_data
 
 
 def get_instagram_transcript(url: str) -> Optional[str]:
@@ -132,6 +150,7 @@ def get_instagram_transcript(url: str) -> Optional[str]:
                 "format": "bestaudio/best",
                 "outtmpl": os.path.join(tmpdir, f"{shortcode}"),
                 "quiet": True,
+                "socket_timeout": 15,
                 "postprocessors": [
                     {
                         "key": "FFmpegExtractAudio",
@@ -141,8 +160,12 @@ def get_instagram_transcript(url: str) -> Optional[str]:
                 ],
             }
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+            except Exception as e:
+                logger.warning(f"yt-dlp failed to download Instagram reel audio: {e}")
+                return None
 
             # Find downloaded audio file
             audio_file = None

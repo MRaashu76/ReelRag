@@ -103,6 +103,7 @@ def get_youtube_metadata(url: str) -> dict:
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
+        "socket_timeout": 15,
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -150,6 +151,7 @@ def _whisper_fallback(url: str, video_id: str) -> Optional[str]:
                 "format": "bestaudio/best",
                 "outtmpl": audio_path,
                 "quiet": True,
+                "socket_timeout": 15,
                 "postprocessors": [
                     {
                         "key": "FFmpegExtractAudio",
