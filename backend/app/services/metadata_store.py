@@ -1,19 +1,23 @@
 """
 Metadata store for video metadata.
 
-- If SUPABASE_URL is set  → uses Supabase PostgreSQL (production).
-- If SUPABASE_URL is unset → falls back to a local JSON file (development).
+- If MONGODB_URI is set  → uses MongoDB Atlas (production).
+- If MONGODB_URI is unset → falls back to a local JSON file (development).
 """
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 from functools import lru_cache
 
 from app.models.schemas import VideoMetadata
-from app.services.supabase_client import get_supabase_client, SUPABASE_URL
 
 logger = logging.getLogger(__name__)
+
+MONGO_URI = os.getenv("MONGODB_URI", "")
+DB_NAME = os.getenv("MONGODB_DB", "reelrag")
+COLLECTION_NAME = "videos"
 
 # Local fallback path (next to this file's package root)
 _FALLBACK_PATH = Path(__file__).parent.parent.parent / "metadata_store.json"
@@ -64,80 +68,59 @@ class _LocalMetadataStore:
         return bool(self._load())
 
 
-# ── Supabase store ─────────────────────────────────────────────────────────────
+# ── MongoDB store ──────────────────────────────────────────────────────────────
 
-class _SupabaseMetadataStore:
-    """Supabase PostgreSQL-backed metadata store."""
+class _MongoMetadataStore:
+    """MongoDB Atlas-backed metadata store."""
 
     def __init__(self):
-        self._client = get_supabase_client()
-        logger.info("Using Supabase metadata store")
+        from pymongo import MongoClient
+        from pymongo.collection import Collection
+
+        self._client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        self._col: Collection = self._client[DB_NAME][COLLECTION_NAME]
+        logger.info("Connected to MongoDB Atlas successfully")
 
     def save_video(self, metadata: VideoMetadata):
-        if not self._client:
-            return
         doc = metadata.model_dump()
-        # Supabase upsert requires the primary key (video_id)
-        try:
-            self._client.table("video_metadata").upsert(doc).execute()
-            logger.info(f"Saved metadata for video_id={metadata.video_id} to Supabase")
-        except Exception as e:
-            logger.error(f"Failed to save metadata to Supabase: {e}")
+        doc["_id"] = metadata.video_id
+        self._col.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+        logger.info(f"Saved metadata for video_id={metadata.video_id}")
 
     def get_video(self, video_id: str) -> Optional[VideoMetadata]:
-        if not self._client:
-            return None
-        try:
-            response = self.client.table("video_metadata").select("*").eq("video_id", video_id).execute()
-            if response.data:
-                return VideoMetadata(**response.data[0])
-        except Exception as e:
-            logger.error(f"Failed to get metadata from Supabase: {e}")
+        doc = self._col.find_one({"_id": video_id})
+        if doc:
+            doc.pop("_id", None)
+            return VideoMetadata(**doc)
         return None
 
     def get_all_videos(self) -> list[VideoMetadata]:
-        if not self._client:
-            return []
-        try:
-            response = self._client.table("video_metadata").select("*").execute()
-            return [VideoMetadata(**d) for d in response.data]
-        except Exception as e:
-            logger.error(f"Failed to get all videos from Supabase: {e}")
-        return []
+        docs = list(self._col.find())
+        for doc in docs:
+            doc.pop("_id", None)
+        return [VideoMetadata(**d) for d in docs]
 
     def clear(self):
-        if not self._client:
-            return
-        try:
-            # Note: in Supabase deleting without filters might require specific setup or just not equalling null
-            self._client.table("video_metadata").delete().neq("video_id", "0").execute()
-            logger.info("Cleared all video metadata from Supabase")
-        except Exception as e:
-            logger.error(f"Failed to clear metadata from Supabase: {e}")
+        self._col.delete_many({})
+        logger.info("Cleared all video metadata from MongoDB")
 
     def has_videos(self) -> bool:
-        if not self._client:
-            return False
-        try:
-            response = self._client.table("video_metadata").select("video_id", count="exact").limit(1).execute()
-            return response.count > 0
-        except Exception as e:
-            logger.error(f"Failed to check has_videos in Supabase: {e}")
-        return False
+        return self._col.count_documents({}) > 0
 
 
 # ── Public alias ───────────────────────────────────────────────────────────────
 
-MetadataStore = _SupabaseMetadataStore if SUPABASE_URL else _LocalMetadataStore
+MetadataStore = _MongoMetadataStore if MONGO_URI else _LocalMetadataStore
 
 
 @lru_cache(maxsize=1)
 def get_metadata_store():
-    if SUPABASE_URL:
-        return _SupabaseMetadataStore()
+    if MONGO_URI:
+        logger.info("MONGODB_URI found — using MongoDB Atlas store")
+        return _MongoMetadataStore()
     else:
         logger.warning(
-            "SUPABASE_URL not set — using local JSON fallback store at %s",
+            "MONGODB_URI not set — using local JSON fallback store at %s",
             _FALLBACK_PATH,
         )
         return _LocalMetadataStore()

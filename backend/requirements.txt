@@ -10,7 +10,7 @@ langchain
 langchain-core
 langchain-groq
 langchain-community
-langchain-postgres
+langchain-chroma
 langchain-text-splitters
 langgraph
 
@@ -19,8 +19,7 @@ sentence-transformers
 torch
 
 # Vector DB
-psycopg2-binary
-supabase
+chromadb
 
 # Transcript extraction
 youtube-transcript-api
@@ -33,3 +32,4 @@ ffmpeg-python
 # Utilities
 httpx
 aiofiles
+pymongo
